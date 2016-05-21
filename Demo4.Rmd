@@ -1,0 +1,57 @@
+---
+title: "NYC income distribution, by census tract"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(leaflet)
+library(ggplot2)
+```
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### Leaflet map
+
+```{r}
+library(leaflet)
+
+tract <- readRDS("nyc-income.rds")
+
+pal <- colorNumeric("RdYlBu", NULL)
+leaflet(tract) %>%
+  addTiles() %>%
+  addPolygons(
+    weight = 1, fillOpacity = 0.7, smoothFactor = 0.2,
+    color = ~pal(percent), label = ~paste0(round(percent), "%")
+  ) %>%
+  addLegend(pal = pal, values = ~percent, title = "% over $200K")
+```
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Histogram of % income over $200K
+
+```{r}
+ggplot(tract@data, aes(x = percent)) + geom_histogram()
+```
+
+### Size in households vs. high income %
+
+```{r}
+# library(plotly)
+# 
+# p <- ggplot(tract@data, aes(x = total, y = percent, text = geography)) +
+#   geom_point(alpha = 0.4) + xlab("Number of households")
+# ggplotly(p, tooltip = "text")
+
+library(threejs)
+scatterplot3js(tract$total, tract$percent, tract$ALAND,
+  color = colorFactor("Spectral", droplevels(tract$COUNTYFP), NULL)(droplevels(tract$COUNTYFP)))
+```
+

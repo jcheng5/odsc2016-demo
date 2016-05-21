@@ -1,0 +1,114 @@
+---
+title: "NYC income distribution, by census tract"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(leaflet)
+library(ggplot2)
+```
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+selectInput("counties", "Counties", multiple = TRUE, choices = c(
+  "(All)" = "", "Bronx" = "005", "Kings" = "047",
+  "New York" = "061", "Queens" = "081", "Richmond" = "085"))
+```
+
+---
+
+This app was created by Joe Cheng (joe@rstudio.com) based on [this blog post](http://zevross.com/blog/2015/10/14/manipulating-and-mapping-us-census-data-in-r-using-the-acs-tigris-and-leaflet-packages-3/) by Zev Ross. Data is from the US Census ACS 5-year Survey, 2014 edition.
+
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+### High-income census tracts in New York City
+
+```{r}
+library(leaflet)
+
+tract <- readRDS("nyc-income.rds")
+
+filteredTracts <- reactive({
+  if (is.null(input$counties))
+    tract
+  else
+    tract[tract$COUNTYFP %in% input$counties,]
+})
+
+pal <- colorNumeric("RdYlBu", NULL)
+leafletOutput("map")
+output$map <- renderLeaflet({
+  leaflet(filteredTracts()) %>%
+    addTiles() %>%
+    addPolygons(
+      weight = 1, fillOpacity = 0.7, smoothFactor = 0.2,
+      color = ~pal(percent), label = ~paste0(round(percent), "%"),
+      layerId = ~paste(STATEFP, COUNTYFP, TRACTCE, sep = "/")
+    ) %>%
+    addLegend(pal = pal, values = ~percent, title = "% over $200K")
+})
+
+# When a tract is clicked, highlight it with a cyan outline
+observeEvent(input$map_shape_click, {
+  if (is.null(input$map_shape_click)) {
+    leafletProxy("map", deferUntilFlush = FALSE) %>% removeShape("highlight")
+  } else if (input$map_shape_click != "highlight") {
+    clicked <- strsplit(input$map_shape_click$id, "/")[[1]]
+    clickedTract <- tract[tract$COUNTYFP == clicked[2] & tract$TRACTCE == clicked[3],]
+    leafletProxy("map", data = clickedTract, deferUntilFlush = FALSE) %>%
+      addPolylines(color = "#00FFFF", opacity = 1, fillOpacity = 0,
+        weight = 3, layerId = "highlight")
+  }
+}, ignoreNULL = FALSE)
+```
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### % households with income >$200K
+
+```{r}
+renderPlot({
+  ggplot(filteredTracts()@data, aes(x = percent)) +
+    geom_histogram(bins = 30, na.rm = TRUE)
+})
+```
+
+### Selected tract
+
+```{r}
+library(acs)
+selectedTract <- eventReactive(input$map_shape_click, {
+  validate(need(input$map_shape_click, "(Click a tract on the map to view details)"))
+  
+  withProgress(message = "Retrieving ACS data, please wait...", {
+    
+    chunks <- strsplit(input$map_shape_click$id, "/", fixed = TRUE)[[1]] %>% as.numeric()
+    geo <- geo.make(state = chunks[[1]], county = chunks[[2]], tract = chunks[[3]])
+    acs.fetch(endyear = 2013, span = 5, geography = geo,
+      table.number = "B19001", col.names = "pretty")
+    
+  })
+}, ignoreNULL = FALSE)
+renderPlot({
+  tr <- selectedTract()
+  labels <- tr@acs.colnames[-1] %>% gsub("Household Income: ", "", .) %>%
+    gsub(",\\d{3}", "K", .)
+  df <- data.frame(
+    label = factor(labels, levels = labels, ordered = TRUE),
+    count = tr@estimate[1,-1,drop=TRUE],
+    stringsAsFactors = FALSE
+  )
+  ggplot(df, aes(x = label, y = count)) + geom_bar(stat = "identity") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+    xlab("")
+})
+```
